@@ -1,0 +1,25 @@
+{
+  "servers": [
+    {
+      "name": "filesystem-server",
+      "stdio": "npx -y @modelcontextprotocol/server-filesystem /data",
+      "port": 8000,
+      "ssePath": "/sse",
+      "messagePath": "/message",
+      "cors": true,
+      "logLevel": "info",
+      "healthEndpoint": "/health"
+    },
+    {
+      "name": "another-server",
+      "stdio": "npx -y another-mcp-server",
+      "port": 8001,
+      "ssePath": "/sse",
+      "messagePath": "/message",
+      "headers": [
+        "X-Custom-Header: value1",
+        "X-Another-Header: value2"
+      ]
+    }
+  ]
+}
