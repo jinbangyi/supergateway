@@ -4,6 +4,8 @@ set -e
 CONFIG_PATH="$1"
 SUPERVISOR_DIR="/etc/supervisor.d"
 # SUPERVISOR_DIR="/home/coder/supergateway/debug"
+NGINX_CONF_DIR="${NGINX_CONF_DIR:-/etc/nginx/conf.d}"
+DOMAIN_SUFFIX="${DOMAIN_SUFFIX:-localhost}"
 
 # Function to create supervisor config for a server
 create_supervisor_config() {
@@ -143,3 +145,80 @@ else
 fi
 
 echo "Configuration complete. Created $(ls -1 $SUPERVISOR_DIR/*.ini | wc -l) server configurations."
+
+# Generate nginx configuration if the generate script exists
+NGINX_GENERATOR="/app/generate-nginx-config.sh"
+if [[ -f "$NGINX_GENERATOR" ]]; then
+  echo "Generating nginx configuration..."
+  
+  # Create nginx config directory if it doesn't exist
+  mkdir -p "$NGINX_CONF_DIR"
+  
+  # Generate nginx config
+  if "$NGINX_GENERATOR" "$CONFIG_PATH" "$NGINX_CONF_DIR" "$DOMAIN_SUFFIX"; then
+    echo "Nginx configuration generated successfully at $NGINX_CONF_DIR/supergateway.conf"
+    echo ""
+    echo "Hostname mappings created:"
+    
+    # Show the mappings
+    if [[ "$file_extension" == "json" ]]; then
+      if command -v jq &> /dev/null; then
+        SERVER_COUNT=$(jq '.servers | length' "$CONFIG_PATH")
+        for (( i=0; i<$SERVER_COUNT; i++ )); do
+          NAME=$(jq -r ".servers[$i].name // \"server$i\"" "$CONFIG_PATH")
+          PORT=$(jq -r ".servers[$i].port // 8000" "$CONFIG_PATH")
+          echo "  - ${NAME}-mcp-server.${DOMAIN_SUFFIX} -> 127.0.0.1:${PORT}"
+        done
+      fi
+    else
+      # Parse shell script again for summary
+      line_number=0
+      current_command=""
+      in_multiline=false
+      
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ -z "$line" || "$line" =~ ^[[:space:]]*#.*$ ]] && [[ "$in_multiline" == false ]]; then
+          continue
+        fi
+        
+        line=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        if [[ "$line" =~ \\[[:space:]]*$ ]]; then
+          line=$(echo "$line" | sed 's/\\[[:space:]]*$//')
+          current_command="$current_command $line"
+          in_multiline=true
+          continue
+        else
+          current_command="$current_command $line"
+          in_multiline=false
+        fi
+        
+        current_command=$(echo "$current_command" | sed 's/[[:space:]]\+/ /g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        if [[ "$current_command" =~ ^supergateway ]]; then
+          line_number=$((line_number + 1))
+          
+          if [[ "$current_command" =~ --name[[:space:]]+([[:alnum:]_-]+) ]]; then
+            name="${BASH_REMATCH[1]}"
+          else
+            name="server$line_number"
+          fi
+          
+          if [[ "$current_command" =~ --port[[:space:]]+([0-9]+) ]]; then
+            port="${BASH_REMATCH[1]}"
+          else
+            port="8000"
+          fi
+          
+          echo "  - ${name}-mcp-server.${DOMAIN_SUFFIX} -> 127.0.0.1:${port}"
+        fi
+        
+        current_command=""
+      done < "$CONFIG_PATH"
+    fi
+  else
+    echo "Warning: Failed to generate nginx configuration"
+  fi
+else
+  echo "Nginx configuration generator not found at $NGINX_GENERATOR"
+fi
